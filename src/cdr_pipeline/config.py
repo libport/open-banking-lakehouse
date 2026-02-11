@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import List
 
 
 def _getenv(name: str, default: str | None = None) -> str | None:
@@ -12,10 +11,10 @@ def _getenv(name: str, default: str | None = None) -> str | None:
     return val
 
 
-def _parse_csv_ints(s: str | None) -> List[int]:
+def _parse_csv_ints(s: str | None) -> list[int]:
     if not s:
         return []
-    out: List[int] = []
+    out: list[int] = []
     for part in s.split(","):
         part = part.strip()
         if not part:
@@ -76,15 +75,15 @@ class Config:
     register_industry: str
     filter_industry: str
     register_xv: int
-    register_xv_fallback: List[int]
+    register_xv_fallback: list[int]
 
     products_path: str
     products_xv: int
-    products_xv_fallback: List[int]
+    products_xv_fallback: list[int]
 
     product_detail_path: str
     product_detail_xv: int
-    product_detail_xv_fallback: List[int]
+    product_detail_xv_fallback: list[int]
 
     timeout_seconds: int
     retry_total: int
@@ -95,7 +94,7 @@ class Config:
     max_pages_per_provider: int
 
     @staticmethod
-    def from_env() -> "Config":
+    def from_env() -> Config:
         provider_limit = _parse_optional_int("PROVIDER_LIMIT")
 
         return Config(

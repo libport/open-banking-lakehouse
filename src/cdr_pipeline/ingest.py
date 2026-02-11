@@ -6,7 +6,7 @@ import logging
 import os
 import uuid
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -216,7 +216,7 @@ def _discover_brands(cfg: Config, session, conn, run_id: str, run_date: str) -> 
             fallback_versions=cfg.register_xv_fallback,
         )
     except HttpRequestFailed as e:
-        fetched_at = datetime.utcnow()
+        fetched_at = datetime.now(timezone.utc)
         _log_api_call(
             conn,
             run_id,
@@ -233,7 +233,7 @@ def _discover_brands(cfg: Config, session, conn, run_id: str, run_date: str) -> 
         raise
 
     payload_bytes = resp.content or b""
-    fetched_at = datetime.utcnow()
+    fetched_at = datetime.now(timezone.utc)
     payload_hash = _sha256_bytes(payload_bytes) if payload_bytes else None
     _log_api_call(
         conn,
@@ -292,7 +292,7 @@ def _fetch_products_for_brand(cfg: Config, session, conn, run_id: str, run_date:
                 next_url,
                 0,
                 None,
-                datetime.utcnow(),
+                datetime.now(timezone.utc),
                 None,
                 None,
                 f"Pagination limit exceeded ({cfg.max_pages_per_provider})",
@@ -309,7 +309,7 @@ def _fetch_products_for_brand(cfg: Config, session, conn, run_id: str, run_date:
                 next_url,
                 0,
                 None,
-                datetime.utcnow(),
+                datetime.now(timezone.utc),
                 None,
                 None,
                 "Pagination loop detected from links.next",
@@ -317,7 +317,7 @@ def _fetch_products_for_brand(cfg: Config, session, conn, run_id: str, run_date:
             break
         seen_urls.add(next_url)
 
-        fetched_at = datetime.utcnow()
+        fetched_at = datetime.now(timezone.utc)
         try:
             resp, responded_xv = get_with_version_fallback(
                 session=session,
@@ -403,7 +403,7 @@ def _fetch_product_details(cfg: Config, session, conn, run_id: str, run_date: st
     ok = 0
     for i, pid in enumerate(sorted(product_ids), start=1):
         url = urljoin(base_uri.rstrip("/") + "/", cfg.product_detail_path.lstrip("/").format(productId=pid))
-        fetched_at = datetime.utcnow()
+        fetched_at = datetime.now(timezone.utc)
         try:
             resp, responded_xv = get_with_version_fallback(
                 session=session,
@@ -481,7 +481,7 @@ def run_ingest(run_dt: datetime, provider_limit: int | None = None) -> None:
     ) as session:
         run_id = str(uuid.uuid4())
         run_date = run_dt.strftime("%Y-%m-%d")
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
 
         with transaction(conn):
             execute(
@@ -498,7 +498,7 @@ def run_ingest(run_dt: datetime, provider_limit: int | None = None) -> None:
             brands = _discover_brands(cfg, session, conn, run_id, run_date)
             logger.info("Discovered %s brands (filtered to industry=%s).", len(brands), cfg.filter_industry)
 
-            extracted_at = datetime.utcnow()
+            extracted_at = datetime.now(timezone.utc)
             brand_rows = [
                 (
                     run_id,

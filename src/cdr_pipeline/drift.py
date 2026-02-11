@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from cdr_pipeline.db import fetchall, execute
+from cdr_pipeline.db import execute, fetchall
 
 
 def _extract_paths(obj: Any, prefix: str = "", max_depth: int = 4) -> set[str]:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any
 
 import psycopg2
 import psycopg2.extras

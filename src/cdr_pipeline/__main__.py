@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 
+from cdr_pipeline.bootstrap import bootstrap_db
 from cdr_pipeline.ingest import run_ingest
 from cdr_pipeline.report import run_report
-from cdr_pipeline.bootstrap import bootstrap_db
 
 
 def _parse_date(s: str | None) -> datetime:

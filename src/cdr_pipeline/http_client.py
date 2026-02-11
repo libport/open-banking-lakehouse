@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Tuple
+from collections.abc import Iterable
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -44,7 +44,7 @@ def get_with_version_fallback(
     preferred_xv: int,
     fallback_versions: Iterable[int] = (),
     extra_headers: dict[str, str] | None = None,
-) -> Tuple[requests.Response, int]:
+) -> tuple[requests.Response, int]:
     versions = [preferred_xv] + [v for v in fallback_versions if v != preferred_xv]
     headers = {}
     if extra_headers:
