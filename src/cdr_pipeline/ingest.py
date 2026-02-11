@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import uuid
+from contextlib import closing
 from datetime import datetime
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -13,9 +14,9 @@ from dotenv import load_dotenv
 
 from cdr_pipeline.bootstrap import bootstrap_db
 from cdr_pipeline.config import Config
-from cdr_pipeline.db import connect_with_retries, execute
+from cdr_pipeline.db import connect_with_retries, execute, execute_batch, transaction
 from cdr_pipeline.drift import record_and_detect_drift
-from cdr_pipeline.http_client import build_session, get_with_version_fallback
+from cdr_pipeline.http_client import HttpRequestFailed, build_session, get_with_version_fallback
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -202,19 +203,51 @@ def _insert_product_detail_raw(
     )
 
 
-def _discover_brands(cfg: Config, session, run_date: str) -> list[dict]:
+def _discover_brands(cfg: Config, session, conn, run_id: str, run_date: str) -> list[dict]:
     url = f"{cfg.register_base}/cdr-register/v1/{cfg.register_industry}/data-holders/brands/summary"
     endpoint = "cdr-register:brands-summary"
 
-    resp, responded_xv = get_with_version_fallback(
-        session=session,
-        url=url,
-        timeout_seconds=cfg.timeout_seconds,
-        preferred_xv=cfg.register_xv,
-        fallback_versions=cfg.register_xv_fallback,
-    )
+    try:
+        resp, responded_xv = get_with_version_fallback(
+            session=session,
+            url=url,
+            timeout_seconds=cfg.timeout_seconds,
+            preferred_xv=cfg.register_xv,
+            fallback_versions=cfg.register_xv_fallback,
+        )
+    except HttpRequestFailed as e:
+        fetched_at = datetime.utcnow()
+        _log_api_call(
+            conn,
+            run_id,
+            "cdr-register",
+            endpoint,
+            url,
+            0,
+            None,
+            fetched_at,
+            None,
+            None,
+            str(e),
+        )
+        raise
 
     payload_bytes = resp.content or b""
+    fetched_at = datetime.utcnow()
+    payload_hash = _sha256_bytes(payload_bytes) if payload_bytes else None
+    _log_api_call(
+        conn,
+        run_id,
+        "cdr-register",
+        endpoint,
+        url,
+        resp.status_code,
+        responded_xv,
+        fetched_at,
+        resp.headers.get("etag"),
+        payload_hash,
+        None if resp.status_code == 200 else (resp.text[:500] if resp.text else f"HTTP {resp.status_code}"),
+    )
     _write_bronze_json(run_date, "cdr-register", endpoint, 1, payload_bytes)
 
     if resp.status_code != 200:
@@ -243,19 +276,71 @@ def _fetch_products_for_brand(cfg: Config, session, conn, run_id: str, run_date:
 
     products_url = urljoin(base_uri.rstrip("/") + "/", cfg.products_path.lstrip("/"))
     next_url = products_url
+    seen_urls: set[str] = set()
     page_num = 1
     total_products = 0
     product_ids: set[str] = set()
 
     while next_url:
-        resp, responded_xv = get_with_version_fallback(
-            session=session,
-            url=next_url,
-            timeout_seconds=cfg.timeout_seconds,
-            preferred_xv=cfg.products_xv,
-            fallback_versions=cfg.products_xv_fallback,
-        )
+        if page_num > cfg.max_pages_per_provider:
+            logger.error("Stopping pagination for provider %s after %s pages (MAX_PAGES_PER_PROVIDER).", provider_id, cfg.max_pages_per_provider)
+            _log_api_call(
+                conn,
+                run_id,
+                provider_id,
+                endpoint,
+                next_url,
+                0,
+                None,
+                datetime.utcnow(),
+                None,
+                None,
+                f"Pagination limit exceeded ({cfg.max_pages_per_provider})",
+            )
+            break
+
+        if next_url in seen_urls:
+            logger.error("Detected pagination loop for provider %s at URL %s. Stopping.", provider_id, next_url)
+            _log_api_call(
+                conn,
+                run_id,
+                provider_id,
+                endpoint,
+                next_url,
+                0,
+                None,
+                datetime.utcnow(),
+                None,
+                None,
+                "Pagination loop detected from links.next",
+            )
+            break
+        seen_urls.add(next_url)
+
         fetched_at = datetime.utcnow()
+        try:
+            resp, responded_xv = get_with_version_fallback(
+                session=session,
+                url=next_url,
+                timeout_seconds=cfg.timeout_seconds,
+                preferred_xv=cfg.products_xv,
+                fallback_versions=cfg.products_xv_fallback,
+            )
+        except HttpRequestFailed as e:
+            _log_api_call(
+                conn,
+                run_id,
+                provider_id,
+                endpoint,
+                next_url,
+                0,
+                None,
+                fetched_at,
+                None,
+                None,
+                str(e),
+            )
+            break
         etag = resp.headers.get("etag")
         status = resp.status_code
         payload_bytes = resp.content or b""
@@ -318,14 +403,30 @@ def _fetch_product_details(cfg: Config, session, conn, run_id: str, run_date: st
     ok = 0
     for i, pid in enumerate(sorted(product_ids), start=1):
         url = urljoin(base_uri.rstrip("/") + "/", cfg.product_detail_path.lstrip("/").format(productId=pid))
-        resp, responded_xv = get_with_version_fallback(
-            session=session,
-            url=url,
-            timeout_seconds=cfg.timeout_seconds,
-            preferred_xv=cfg.product_detail_xv,
-            fallback_versions=cfg.product_detail_xv_fallback,
-        )
         fetched_at = datetime.utcnow()
+        try:
+            resp, responded_xv = get_with_version_fallback(
+                session=session,
+                url=url,
+                timeout_seconds=cfg.timeout_seconds,
+                preferred_xv=cfg.product_detail_xv,
+                fallback_versions=cfg.product_detail_xv_fallback,
+            )
+        except HttpRequestFailed as e:
+            _log_api_call(
+                conn,
+                run_id,
+                provider_id,
+                endpoint,
+                url,
+                0,
+                None,
+                fetched_at,
+                None,
+                None,
+                str(e),
+            )
+            continue
         etag = resp.headers.get("etag")
         status = resp.status_code
         payload_bytes = resp.content or b""
@@ -375,48 +476,80 @@ def run_ingest(run_dt: datetime, provider_limit: int | None = None) -> None:
     cfg = Config.from_env()
 
     bootstrap_db(force=False)
-    conn = connect_with_retries(cfg.pg_dsn())
-    session = build_session(cfg.retry_total, cfg.retry_backoff, cfg.user_agent)
+    with closing(connect_with_retries(cfg.pg_dsn(), autocommit=False)) as conn, closing(
+        build_session(cfg.retry_total, cfg.retry_backoff, cfg.user_agent)
+    ) as session:
+        run_id = str(uuid.uuid4())
+        run_date = run_dt.strftime("%Y-%m-%d")
+        started_at = datetime.utcnow()
 
-    run_id = str(uuid.uuid4())
-    run_date = run_dt.strftime("%Y-%m-%d")
-    started_at = datetime.utcnow()
+        with transaction(conn):
+            execute(
+                conn,
+                """
+                INSERT INTO bronze.pipeline_run (run_id, run_started_at, run_date, register_industry, filter_industry, fetch_product_details, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (run_id, started_at, run_date, cfg.register_industry, cfg.filter_industry, cfg.fetch_product_details, None),
+            )
 
-    execute(
-        conn,
-        """
-        INSERT INTO bronze.pipeline_run (run_id, run_started_at, run_date, register_industry, filter_industry, fetch_product_details, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """,
-        (run_id, started_at, run_date, cfg.register_industry, cfg.filter_industry, cfg.fetch_product_details, None),
-    )
+        # Discovery is isolated so its API-call diagnostics remain committed even if it fails.
+        with transaction(conn):
+            brands = _discover_brands(cfg, session, conn, run_id, run_date)
+            logger.info("Discovered %s brands (filtered to industry=%s).", len(brands), cfg.filter_industry)
 
-    brands = _discover_brands(cfg, session, run_date)
-    logger.info("Discovered %s brands (filtered to industry=%s).", len(brands), cfg.filter_industry)
+            extracted_at = datetime.utcnow()
+            brand_rows = [
+                (
+                    run_id,
+                    b.get("dataHolderBrandId"),
+                    b.get("brandName"),
+                    b.get("brandGroup"),
+                    json.dumps(b.get("industries", [])),
+                    b.get("publicBaseUri"),
+                    b.get("productBaseUri"),
+                    b.get("logoUri"),
+                    b.get("lastUpdated"),
+                    extracted_at,
+                )
+                for b in brands
+            ]
+            if brand_rows:
+                execute_batch(
+                    conn,
+                    """
+                    INSERT INTO bronze.data_holder_brand (
+                        run_id, data_holder_brand_id, brand_name, brand_group, industries,
+                        public_base_uri, product_base_uri, logo_uri, last_updated, extracted_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s::jsonb,
+                        %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (run_id, data_holder_brand_id) DO NOTHING
+                    """,
+                    brand_rows,
+                )
 
-    extracted_at = datetime.utcnow()
-    for b in brands:
-        _insert_brand(conn, run_id, b, extracted_at)
+        limit = provider_limit if provider_limit is not None else cfg.provider_limit
+        if limit and limit > 0:
+            brands = brands[:limit]
+            logger.info("Provider limit applied: processing %s brands.", len(brands))
 
-    limit = provider_limit if provider_limit is not None else cfg.provider_limit
-    if limit and limit > 0:
-        brands = brands[:limit]
-        logger.info("Provider limit applied: processing %s brands.", len(brands))
+        total_products = 0
+        for idx, b in enumerate(brands, start=1):
+            pid = b.get("dataHolderBrandId")
+            name = b.get("brandName")
+            logger.info("[%s/%s] Fetching products for %s (%s)...", idx, len(brands), name, pid)
+            try:
+                with transaction(conn):
+                    n, product_ids = _fetch_products_for_brand(cfg, session, conn, run_id, run_date, b)
+                    total_products += n
+                    logger.info("  -> %s products ingested (sum of pages).", n)
+                    if cfg.fetch_product_details:
+                        ok = _fetch_product_details(cfg, session, conn, run_id, run_date, b, product_ids)
+                        logger.info("  -> %s product details ingested.", ok)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("Failed brand %s (%s): %s", name, pid, e)
+                continue
 
-    total_products = 0
-    for idx, b in enumerate(brands, start=1):
-        pid = b.get("dataHolderBrandId")
-        name = b.get("brandName")
-        logger.info("[%s/%s] Fetching products for %s (%s)...", idx, len(brands), name, pid)
-        try:
-            n, product_ids = _fetch_products_for_brand(cfg, session, conn, run_id, run_date, b)
-            total_products += n
-            logger.info("  -> %s products ingested (sum of pages).", n)
-            if cfg.fetch_product_details:
-                ok = _fetch_product_details(cfg, session, conn, run_id, run_date, b, product_ids)
-                logger.info("  -> %s product details ingested.", ok)
-        except Exception as e:  # noqa: BLE001
-            logger.exception("Failed brand %s (%s): %s", name, pid, e)
-            continue
-
-    logger.info("Ingest complete. Total products (summed pages): %s. Run ID: %s", total_products, run_id)
+        logger.info("Ingest complete. Total products (summed pages): %s. Run ID: %s", total_products, run_id)

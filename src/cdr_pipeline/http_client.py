@@ -10,6 +10,13 @@ from urllib3.util.retry import Retry
 logger = logging.getLogger(__name__)
 
 
+class HttpRequestFailed(RuntimeError):
+    def __init__(self, url: str, cause: Exception):
+        self.url = url
+        self.cause = cause
+        super().__init__(f"HTTP request failed for {url}: {cause}")
+
+
 def build_session(retry_total: int, backoff_factor: float, user_agent: str) -> requests.Session:
     session = requests.Session()
     retry = Retry(
@@ -44,9 +51,15 @@ def get_with_version_fallback(
         headers.update(extra_headers)
 
     last_resp: requests.Response | None = None
+    last_exc: Exception | None = None
     for xv in versions:
         headers["x-v"] = str(xv)
-        resp = session.get(url, headers=headers, timeout=timeout_seconds)
+        try:
+            resp = session.get(url, headers=headers, timeout=timeout_seconds)
+        except requests.RequestException as e:
+            last_exc = e
+            logger.warning("Request error for %s with x-v=%s: %s", url, xv, e)
+            continue
         last_resp = resp
         if resp.status_code != 406:
             responded = resp.headers.get("x-v")
@@ -55,6 +68,9 @@ def get_with_version_fallback(
             except ValueError:
                 return resp, xv
         logger.warning("406 for %s with x-v=%s; trying fallback...", url, xv)
+
+    if last_resp is None and last_exc is not None:
+        raise HttpRequestFailed(url=url, cause=last_exc) from last_exc
 
     assert last_resp is not None
     responded = last_resp.headers.get("x-v")

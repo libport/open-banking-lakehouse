@@ -11,6 +11,7 @@ This project builds a local-first data engineering pipeline for Australian finan
 > Notes:
 > - Public product endpoints are unauthenticated by design, but Data Holders may apply rate limits or availability constraints.
 > - API versions can vary across Data Holders. This pipeline includes version fallback when it receives a 406.
+> - Ingestion includes pagination loop detection and a configurable page cap per provider for safety.
 
 ## Quickstart (Docker-only)
 
@@ -101,6 +102,14 @@ make dbt
 make report
 ```
 
+Basic local quality checks:
+
+```bash
+pip install -e ".[dev]"
+ruff check src tests
+pytest -q
+```
+
 You can override the run date:
 
 ```bash
@@ -118,6 +127,7 @@ Key env vars:
 - `CDR_REGISTER_XV` (default: `2`) - preferred x-v for Brands Summary (fallbacks included)
 - `FETCH_PRODUCT_DETAILS` (default: `false`) - if true, also calls Get Product Detail for each productId
 - `PROVIDER_LIMIT` (default: empty) - set to an integer to limit number of providers (useful for quick runs)
+- `MAX_PAGES_PER_PROVIDER` (default: `200`) - hard cap to prevent pagination loops or runaway fetches
 
 ## License
 MIT (see `LICENSE`).

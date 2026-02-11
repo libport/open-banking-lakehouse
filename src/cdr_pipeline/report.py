@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import os
+from contextlib import closing
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -25,74 +26,73 @@ def _write_csv(path: str, headers: list[str], rows: list[tuple]) -> None:
 def run_report(run_dt: datetime) -> None:
     load_dotenv(override=False)
     cfg = Config.from_env()
-    conn = connect_with_retries(cfg.pg_dsn())
+    with closing(connect_with_retries(cfg.pg_dsn(), autocommit=True)) as conn:
+        report_date = run_dt.strftime("%Y-%m-%d")
+        _ensure_dir("reports")
 
-    report_date = run_dt.strftime("%Y-%m-%d")
-    _ensure_dir("reports")
+        errors: list[str] = []
 
-    errors: list[str] = []
+        try:
+            rate_changes = fetchall(
+                conn,
+                """
+                SELECT
+                  provider_id,
+                  brand_name,
+                  product_id,
+                  product_name,
+                  product_category,
+                  rate_kind,
+                  rate_type,
+                  tier_name,
+                  previous_as_of_date,
+                  current_as_of_date,
+                  previous_rate,
+                  current_rate,
+                  (current_rate - previous_rate) AS delta
+                FROM gold.mart_rate_changes
+                ORDER BY abs(current_rate - previous_rate) DESC NULLS LAST
+                LIMIT 200
+                """,
+            )
+        except Exception as e:  # noqa: BLE001
+            rate_changes = []
+            errors.append(f"gold.mart_rate_changes not available (run dbt?): {e}")
 
-    try:
-        rate_changes = fetchall(
-            conn,
-            """
-            SELECT
-              provider_id,
-              brand_name,
-              product_id,
-              product_name,
-              product_category,
-              rate_kind,
-              rate_type,
-              tier_name,
-              previous_as_of_date,
-              current_as_of_date,
-              previous_rate,
-              current_rate,
-              (current_rate - previous_rate) AS delta
-            FROM gold.mart_rate_changes
-            ORDER BY abs(current_rate - previous_rate) DESC NULLS LAST
-            LIMIT 200
-            """,
-        )
-    except Exception as e:  # noqa: BLE001
-        rate_changes = []
-        errors.append(f"gold.mart_rate_changes not available (run dbt?): {e}")
+        try:
+            coverage = fetchall(
+                conn,
+                """
+                SELECT
+                  as_of_date,
+                  provider_id,
+                  brand_name,
+                  expected_base_uri,
+                  products_pages_ok,
+                  products_rows,
+                  last_http_status,
+                  last_error
+                FROM gold.mart_provider_coverage
+                ORDER BY brand_name
+                """,
+            )
+        except Exception as e:  # noqa: BLE001
+            coverage = []
+            errors.append(f"gold.mart_provider_coverage not available (run dbt?): {e}")
 
-    try:
-        coverage = fetchall(
-            conn,
-            """
-            SELECT
-              as_of_date,
-              provider_id,
-              brand_name,
-              expected_base_uri,
-              products_pages_ok,
-              products_rows,
-              last_http_status,
-              last_error
-            FROM gold.mart_provider_coverage
-            ORDER BY brand_name
-            """,
-        )
-    except Exception as e:  # noqa: BLE001
-        coverage = []
-        errors.append(f"gold.mart_provider_coverage not available (run dbt?): {e}")
-
-    try:
-        drift = fetchall(
-            conn,
-            """
-            SELECT provider_id, endpoint, old_fingerprint_hash, new_fingerprint_hash, observed_at
-            FROM bronze.schema_drift_event
-            ORDER BY observed_at DESC
-            LIMIT 50
-            """,
-        )
-    except Exception as e:  # noqa: BLE001
-        drift = []
-        errors.append(f"bronze.schema_drift_event not available: {e}")
+        try:
+            drift = fetchall(
+                conn,
+                """
+                SELECT provider_id, endpoint, old_fingerprint_hash, new_fingerprint_hash, observed_at
+                FROM bronze.schema_drift_event
+                ORDER BY observed_at DESC
+                LIMIT 50
+                """,
+            )
+        except Exception as e:  # noqa: BLE001
+            drift = []
+            errors.append(f"bronze.schema_drift_event not available: {e}")
 
     if rate_changes:
         rate_csv = os.path.join("reports", f"rate_changes_{report_date}.csv")

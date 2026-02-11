@@ -1,20 +1,35 @@
 
-with dates as (
-  select max(as_of_date) as current_date
+with provider_dates as (
+  select
+    provider_id,
+    max(as_of_date) as current_date
   from {{ ref('fct_product_rates') }}
+  group by provider_id
 ),
-prev as (
-  select max(as_of_date) as previous_date
-  from {{ ref('fct_product_rates') }}
-  where as_of_date < (select current_date from dates)
+previous_dates as (
+  select
+    d.provider_id,
+    d.current_date,
+    max(r.as_of_date) as previous_date
+  from provider_dates d
+  join {{ ref('fct_product_rates') }} r
+    on r.provider_id = d.provider_id
+   and r.as_of_date < d.current_date
+  group by d.provider_id, d.current_date
 ),
 cur as (
-  select * from {{ ref('fct_product_rates') }}
-  where as_of_date = (select current_date from dates)
+  select r.*
+  from {{ ref('fct_product_rates') }} r
+  join previous_dates d
+    on r.provider_id = d.provider_id
+   and r.as_of_date = d.current_date
 ),
 prv as (
-  select * from {{ ref('fct_product_rates') }}
-  where as_of_date = (select previous_date from prev)
+  select r.*
+  from {{ ref('fct_product_rates') }} r
+  join previous_dates d
+    on r.provider_id = d.provider_id
+   and r.as_of_date = d.previous_date
 ),
 joined as (
   select
@@ -26,8 +41,8 @@ joined as (
     coalesce(cur.rate_kind, prv.rate_kind) as rate_kind,
     coalesce(cur.rate_type, prv.rate_type) as rate_type,
     coalesce(cur.tier_name, prv.tier_name) as tier_name,
-    (select previous_date from prev) as previous_as_of_date,
-    (select current_date from dates) as current_as_of_date,
+    d.previous_date as previous_as_of_date,
+    d.current_date as current_as_of_date,
     prv.rate as previous_rate,
     cur.rate as current_rate
   from cur
@@ -37,6 +52,8 @@ joined as (
    and cur.rate_kind = prv.rate_kind
    and cur.rate_type = prv.rate_type
    and coalesce(cur.tier_name,'') = coalesce(prv.tier_name,'')
+  left join previous_dates d
+    on d.provider_id = coalesce(cur.provider_id, prv.provider_id)
 )
 select *
 from joined

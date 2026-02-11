@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from contextlib import closing
 
 from cdr_pipeline.config import Config
-from cdr_pipeline.db import connect_with_retries, execute
+from cdr_pipeline.db import connect_with_retries, execute, transaction
 
 logger = logging.getLogger(__name__)
 
@@ -105,15 +106,14 @@ CREATE TABLE IF NOT EXISTS raw.product_detail_raw (
 
 def bootstrap_db(force: bool = False) -> None:
     cfg = Config.from_env()
-    conn = connect_with_retries(cfg.pg_dsn())
+    with closing(connect_with_retries(cfg.pg_dsn(), autocommit=False)) as conn, transaction(conn):
+        if force:
+            logger.warning("FORCE: dropping schemas (deletes all data).")
+            execute(conn, "DROP SCHEMA IF EXISTS gold CASCADE;")
+            execute(conn, "DROP SCHEMA IF EXISTS silver CASCADE;")
+            execute(conn, "DROP SCHEMA IF EXISTS staging CASCADE;")
+            execute(conn, "DROP SCHEMA IF EXISTS raw CASCADE;")
+            execute(conn, "DROP SCHEMA IF EXISTS bronze CASCADE;")
 
-    if force:
-        logger.warning("FORCE: dropping schemas (deletes all data).")
-        execute(conn, "DROP SCHEMA IF EXISTS gold CASCADE;")
-        execute(conn, "DROP SCHEMA IF EXISTS silver CASCADE;")
-        execute(conn, "DROP SCHEMA IF EXISTS staging CASCADE;")
-        execute(conn, "DROP SCHEMA IF EXISTS raw CASCADE;")
-        execute(conn, "DROP SCHEMA IF EXISTS bronze CASCADE;")
-
-    execute(conn, DDL)
+        execute(conn, DDL)
     logger.info("Bootstrapped Postgres schemas/tables.")

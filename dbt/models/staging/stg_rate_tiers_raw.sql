@@ -21,8 +21,9 @@ tiers as (
     additional_info,
     additional_info_uri,
     conditions_json,
-    jsonb_array_elements(coalesce(tiers_json,'[{}]'::jsonb)) as tier
+    tier
   from r
+  left join lateral jsonb_array_elements(coalesce(tiers_json,'[]'::jsonb)) as jt(tier) on true
 )
 select
   provider_id,

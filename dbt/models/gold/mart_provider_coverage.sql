@@ -14,11 +14,19 @@ brands as (
 calls as (
   select
     provider_id,
-    max(http_status) filter (where endpoint = 'banking:get-products') as last_http_status,
-    max(error) filter (where endpoint = 'banking:get-products') as last_error
-  from {{ source('bronze','api_call_log') }}
-  where fetched_at::date = (select as_of_date from latest_day)
-  group by provider_id
+    http_status as last_http_status,
+    error as last_error
+  from (
+    select
+      provider_id,
+      http_status,
+      error,
+      row_number() over (partition by provider_id order by fetched_at desc) as rn
+    from {{ source('bronze','api_call_log') }}
+    where endpoint = 'banking:get-products'
+      and fetched_at::date = (select as_of_date from latest_day)
+  ) t
+  where rn = 1
 ),
 pages as (
   select

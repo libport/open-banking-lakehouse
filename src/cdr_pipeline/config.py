@@ -27,6 +27,43 @@ def _parse_csv_ints(s: str | None) -> List[int]:
     return out
 
 
+def _require_int(name: str, default: str) -> int:
+    raw = _getenv(name, default)
+    assert raw is not None
+    try:
+        return int(raw)
+    except ValueError as e:
+        raise ValueError(f"Environment variable {name} must be an integer, got: {raw!r}") from e
+
+
+def _require_float(name: str, default: str) -> float:
+    raw = _getenv(name, default)
+    assert raw is not None
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise ValueError(f"Environment variable {name} must be a float, got: {raw!r}") from e
+
+
+def _parse_optional_int(name: str) -> int | None:
+    raw = _getenv(name, None)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError as e:
+        raise ValueError(f"Environment variable {name} must be an integer if set, got: {raw!r}") from e
+
+
+def _parse_bool(name: str, default: str = "false") -> bool:
+    raw = (_getenv(name, default) or default).strip().lower()
+    if raw in ("1", "true", "yes", "y"):
+        return True
+    if raw in ("0", "false", "no", "n"):
+        return False
+    raise ValueError(f"Environment variable {name} must be a boolean value, got: {raw!r}")
+
+
 @dataclass(frozen=True)
 class Config:
     pg_host: str
@@ -55,15 +92,15 @@ class Config:
     user_agent: str
     fetch_product_details: bool
     provider_limit: int | None
+    max_pages_per_provider: int
 
     @staticmethod
     def from_env() -> "Config":
-        provider_limit_raw = _getenv("PROVIDER_LIMIT", None)
-        provider_limit = int(provider_limit_raw) if provider_limit_raw and provider_limit_raw.isdigit() else None
+        provider_limit = _parse_optional_int("PROVIDER_LIMIT")
 
         return Config(
             pg_host=_getenv("POSTGRES_HOST", "localhost") or "localhost",
-            pg_port=int(_getenv("POSTGRES_PORT", "5432") or "5432"),
+            pg_port=_require_int("POSTGRES_PORT", "5432"),
             pg_db=_getenv("POSTGRES_DB", "cdr") or "cdr",
             pg_user=_getenv("POSTGRES_USER", "cdr") or "cdr",
             pg_password=_getenv("POSTGRES_PASSWORD", "cdr") or "cdr",
@@ -71,23 +108,24 @@ class Config:
             register_base=(_getenv("CDR_REGISTER_BASE", "https://api.cdr.gov.au") or "https://api.cdr.gov.au").rstrip("/"),
             register_industry=_getenv("CDR_REGISTER_INDUSTRY", "all") or "all",
             filter_industry=_getenv("CDR_FILTER_INDUSTRY", "banking") or "banking",
-            register_xv=int(_getenv("CDR_REGISTER_XV", "2") or "2"),
+            register_xv=_require_int("CDR_REGISTER_XV", "2"),
             register_xv_fallback=_parse_csv_ints(_getenv("CDR_REGISTER_XV_FALLBACK", "1")),
 
             products_path=_getenv("CDR_PRODUCTS_PATH", "/cds-au/v1/banking/products") or "/cds-au/v1/banking/products",
-            products_xv=int(_getenv("CDR_PRODUCTS_XV", "4") or "4"),
+            products_xv=_require_int("CDR_PRODUCTS_XV", "4"),
             products_xv_fallback=_parse_csv_ints(_getenv("CDR_PRODUCTS_XV_FALLBACK", "3,2,1")),
 
             product_detail_path=_getenv("CDR_PRODUCT_DETAIL_PATH", "/cds-au/v1/banking/products/{productId}") or "/cds-au/v1/banking/products/{productId}",
-            product_detail_xv=int(_getenv("CDR_PRODUCT_DETAIL_XV", "6") or "6"),
+            product_detail_xv=_require_int("CDR_PRODUCT_DETAIL_XV", "6"),
             product_detail_xv_fallback=_parse_csv_ints(_getenv("CDR_PRODUCT_DETAIL_XV_FALLBACK", "5,4,3,2,1")),
 
-            timeout_seconds=int(_getenv("HTTP_TIMEOUT_SECONDS", "30") or "30"),
-            retry_total=int(_getenv("HTTP_RETRY_TOTAL", "5") or "5"),
-            retry_backoff=float(_getenv("HTTP_RETRY_BACKOFF", "0.4") or "0.4"),
+            timeout_seconds=_require_int("HTTP_TIMEOUT_SECONDS", "30"),
+            retry_total=_require_int("HTTP_RETRY_TOTAL", "5"),
+            retry_backoff=_require_float("HTTP_RETRY_BACKOFF", "0.4"),
             user_agent=_getenv("HTTP_USER_AGENT", "cdr-open-banking-lakehouse-local/1.0") or "cdr-open-banking-lakehouse-local/1.0",
-            fetch_product_details=(_getenv("FETCH_PRODUCT_DETAILS", "false") or "false").lower() in ("1", "true", "yes", "y"),
+            fetch_product_details=_parse_bool("FETCH_PRODUCT_DETAILS", "false"),
             provider_limit=provider_limit,
+            max_pages_per_provider=_require_int("MAX_PAGES_PER_PROVIDER", "200"),
         )
 
     def pg_dsn(self) -> str:

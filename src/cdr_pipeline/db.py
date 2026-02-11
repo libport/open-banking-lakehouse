@@ -8,12 +8,17 @@ import psycopg2
 import psycopg2.extras
 
 
-def connect_with_retries(dsn: str, retries: int = 30, sleep_seconds: float = 1.0):
+def connect_with_retries(
+    dsn: str,
+    retries: int = 30,
+    sleep_seconds: float = 1.0,
+    autocommit: bool = False,
+):
     last_err: Exception | None = None
     for _ in range(retries):
         try:
             conn = psycopg2.connect(dsn)
-            conn.autocommit = True
+            conn.autocommit = autocommit
             return conn
         except Exception as e:  # noqa: BLE001
             last_err = e
@@ -44,3 +49,13 @@ def fetchall(conn, sql: str, params: Sequence[Any] | None = None) -> list[tuple]
 def execute_batch(conn, sql: str, rows: Iterable[Sequence[Any]]) -> None:
     with get_cursor(conn) as cur:
         psycopg2.extras.execute_batch(cur, sql, rows, page_size=500)
+
+
+@contextmanager
+def transaction(conn) -> Iterator[None]:
+    try:
+        yield
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise

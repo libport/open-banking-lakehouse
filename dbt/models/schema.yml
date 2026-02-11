@@ -2,6 +2,12 @@ version: 2
 
 models:
   - name: dim_products
+    tests:
+      - unique_combo:
+          combination_of_columns:
+            - provider_id
+            - product_id
+            - as_of_date
     columns:
       - name: provider_id
         tests: [not_null]
@@ -18,8 +24,26 @@ models:
         tests: [not_null]
       - name: as_of_date
         tests: [not_null]
+      - name: rate_kind
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['deposit', 'lending']
+      - name: rate_type
+        tests: [not_null]
+      - name: rate
+        tests: [not_null]
 
   - name: mart_rate_changes
+    tests:
+      - unique_combo:
+          combination_of_columns:
+            - provider_id
+            - product_id
+            - current_as_of_date
+            - rate_kind
+            - rate_type
+            - tier_name
     columns:
       - name: provider_id
         tests: [not_null]
@@ -29,4 +53,4 @@ models:
   - name: mart_provider_coverage
     columns:
       - name: provider_id
-        tests: [not_null]
+        tests: [not_null, unique]
