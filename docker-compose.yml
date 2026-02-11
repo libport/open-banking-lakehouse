@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cdr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cdr}
+      POSTGRES_DB: ${POSTGRES_DB:-cdr}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cdr} -d ${POSTGRES_DB:-cdr}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  metabase:
+    image: metabase/metabase:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: ${POSTGRES_DB:-cdr}
+      MB_DB_PORT: 5432
+      MB_DB_USER: ${POSTGRES_USER:-cdr}
+      MB_DB_PASS: ${POSTGRES_PASSWORD:-cdr}
+      MB_DB_HOST: postgres
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-cdr}
+      POSTGRES_USER: ${POSTGRES_USER:-cdr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cdr}
+
+      CDR_REGISTER_BASE: ${CDR_REGISTER_BASE:-https://api.cdr.gov.au}
+      CDR_REGISTER_INDUSTRY: ${CDR_REGISTER_INDUSTRY:-all}
+      CDR_FILTER_INDUSTRY: ${CDR_FILTER_INDUSTRY:-banking}
+      CDR_REGISTER_XV: ${CDR_REGISTER_XV:-2}
+      CDR_REGISTER_XV_FALLBACK: ${CDR_REGISTER_XV_FALLBACK:-1}
+
+      CDR_PRODUCTS_PATH: ${CDR_PRODUCTS_PATH:-/cds-au/v1/banking/products}
+      CDR_PRODUCTS_XV: ${CDR_PRODUCTS_XV:-4}
+      CDR_PRODUCTS_XV_FALLBACK: ${CDR_PRODUCTS_XV_FALLBACK:-3,2,1}
+
+      CDR_PRODUCT_DETAIL_PATH: ${CDR_PRODUCT_DETAIL_PATH:-/cds-au/v1/banking/products/{productId}}
+      CDR_PRODUCT_DETAIL_XV: ${CDR_PRODUCT_DETAIL_XV:-6}
+      CDR_PRODUCT_DETAIL_XV_FALLBACK: ${CDR_PRODUCT_DETAIL_XV_FALLBACK:-5,4,3,2,1}
+
+      FETCH_PRODUCT_DETAILS: ${FETCH_PRODUCT_DETAILS:-false}
+      PROVIDER_LIMIT: ${PROVIDER_LIMIT:-}
+
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-30}
+      HTTP_RETRY_TOTAL: ${HTTP_RETRY_TOTAL:-5}
+      HTTP_RETRY_BACKOFF: ${HTTP_RETRY_BACKOFF:-0.4}
+      HTTP_USER_AGENT: ${HTTP_USER_AGENT:-cdr-open-banking-lakehouse-local/1.0}
+
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./dbt:/app/dbt
+
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-postgres:1.9.latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DBT_PROFILES_DIR: /usr/app
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-cdr}
+      POSTGRES_USER: ${POSTGRES_USER:-cdr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cdr}
+    volumes:
+      - ./dbt:/usr/app
+    working_dir: /usr/app
+
+volumes:
+  pgdata:

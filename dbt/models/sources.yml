@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: products_raw
+      - name: product_detail_raw
+  - name: bronze
+    schema: bronze
+    tables:
+      - name: api_call_log
+      - name: pipeline_run
+      - name: data_holder_brand
+      - name: schema_drift_event

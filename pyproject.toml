@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cdr-pipeline"
+version = "0.1.0"
+description = "Local-first AU CDR Open Banking product & pricing lakehouse pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["cdr", "open-banking", "dbt", "postgres", "lakehouse"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+# Keep dependencies in requirements.txt so Docker + local installs stay consistent.
+dynamic = ["dependencies"]
+
+[project.scripts]
+# Lets you run: `cdr-pipeline ingest --date 2026-02-10`
+cdr-pipeline = "cdr_pipeline.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }

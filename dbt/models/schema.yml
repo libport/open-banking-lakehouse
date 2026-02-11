@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: dim_products
+    columns:
+      - name: provider_id
+        tests: [not_null]
+      - name: product_id
+        tests: [not_null]
+      - name: as_of_date
+        tests: [not_null]
+
+  - name: fct_product_rates
+    columns:
+      - name: provider_id
+        tests: [not_null]
+      - name: product_id
+        tests: [not_null]
+      - name: as_of_date
+        tests: [not_null]
+
+  - name: mart_rate_changes
+    columns:
+      - name: provider_id
+        tests: [not_null]
+      - name: product_id
+        tests: [not_null]
+
+  - name: mart_provider_coverage
+    columns:
+      - name: provider_id
+        tests: [not_null]
