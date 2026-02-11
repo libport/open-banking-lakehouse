@@ -6,6 +6,7 @@ This project builds a local-first data engineering pipeline for Australian finan
 - Stores raw JSON ("bronze") to local disk + "raw" JSONB tables in Postgres
 - Transforms to analytics-ready tables with dbt (staging → silver → gold)
 - Produces a daily rate-change report (CSV + Markdown)
+- Runs configurable QA gates with optional dbt test execution
 - Optional: view dashboards in Metabase (local)
 
 > Notes:
@@ -24,6 +25,15 @@ make up
 
 # 2) Run a full pipeline run (ingest → dbt build → report)
 make run
+
+# 3) Run QA gates (in Docker, dbt tests are skipped)
+make qa
+```
+
+If `make up` fails due a Metabase image tag issue, start only Postgres:
+
+```bash
+docker compose up -d postgres
 ```
 
 Metabase will be available at:
@@ -55,12 +65,19 @@ pip install -e .
 cdr-pipeline ingest --date 2026-02-10
 
 # Option A: run dbt via Docker (recommended if you don't want local dbt)
-docker compose run --rm dbt dbt build
+docker compose run --rm dbt build
 
 # Option B: run dbt locally (if you installed dbt-postgres)
 # dbt build --project-dir dbt
 
 cdr-pipeline report --date 2026-02-10
+
+# 3) Run QA gates + dbt tests (local dbt installed)
+cdr-pipeline qa --date 2026-02-10
+
+# If you use dbt via Docker, run dbt test separately and skip inside QA
+docker compose run --rm dbt test
+cdr-pipeline qa --date 2026-02-10 --skip-dbt-tests
 ```
 
 You can also call the module directly (equivalent to the CLI):
@@ -68,6 +85,7 @@ You can also call the module directly (equivalent to the CLI):
 ```bash
 python -m cdr_pipeline ingest --date 2026-02-10
 python -m cdr_pipeline report --date 2026-02-10
+python -m cdr_pipeline qa --date 2026-02-10 --skip-dbt-tests
 ```
 
 ## What gets created
@@ -75,16 +93,15 @@ python -m cdr_pipeline report --date 2026-02-10
 ### Storage
 - Local raw files: `data/bronze/...` (partitioned by date/provider/endpoint/page)
 - Postgres schemas:
-  - `bronze` - pipeline run metadata, API call logs, drift events, discovered brands
+  - `bronze` - pipeline run metadata, API call logs, drift events, discovered brands, QA gate results
   - `raw` - raw API payloads stored as JSONB
-  - `staging` - dbt staging views
-  - `silver` - normalized, analysis-friendly tables
-  - `gold` - marts (rate changes + pipeline coverage)
+  - dbt output schemas default to `public_staging`, `public_silver`, `public_gold` with current `dbt/profiles.yml`
 
 ### Outputs
 - `reports/`:
   - `rate_changes_<YYYY-MM-DD>.csv`
   - `pipeline_summary_<YYYY-MM-DD>.md`
+  - `qa_summary_<YYYY-MM-DD>.md`
 
 ## Useful commands
 
@@ -100,6 +117,9 @@ make dbt
 
 # Report only
 make report
+
+# QA gates (skip dbt tests in container)
+make qa
 ```
 
 Basic local quality checks:
@@ -128,6 +148,13 @@ Key env vars:
 - `FETCH_PRODUCT_DETAILS` (default: `false`) - if true, also calls Get Product Detail for each productId
 - `PROVIDER_LIMIT` (default: empty) - set to an integer to limit number of providers (useful for quick runs)
 - `MAX_PAGES_PER_PROVIDER` (default: `200`) - hard cap to prevent pagination loops or runaway fetches
+- `QA_MIN_PROVIDERS_OK` (default: `1`) - minimum providers with successful product fetch in `gold.mart_provider_coverage`
+- `QA_MIN_PRODUCTS` (default: `1`) - minimum rows in `silver.dim_products` for QA date
+- `QA_MIN_RATE_CHANGES` (default: `1`) - minimum rows in `gold.mart_rate_changes` for QA date
+- `QA_MAX_FRESHNESS_HOURS` (default: `36`) - max age (hours) of latest `raw.products_raw.fetched_at`
+- `QA_FAIL_ON_SCHEMA_DRIFT` (default: `false`) - fail QA when any `bronze.schema_drift_event` occurs on QA date
+- `QA_RUN_DBT_TESTS` (default: `true`) - run dbt tests as part of `cdr-pipeline qa`
+- `QA_DBT_TEST_COMMAND` (default: `dbt test --project-dir dbt --profiles-dir dbt`) - command used for dbt test execution
 
 ## License
 MIT (see `LICENSE`).

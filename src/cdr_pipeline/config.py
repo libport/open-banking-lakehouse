@@ -92,6 +92,13 @@ class Config:
     fetch_product_details: bool
     provider_limit: int | None
     max_pages_per_provider: int
+    qa_min_providers_ok: int
+    qa_min_products: int
+    qa_min_rate_changes: int
+    qa_max_freshness_hours: float
+    qa_fail_on_schema_drift: bool
+    qa_run_dbt_tests: bool
+    qa_dbt_test_command: str
 
     @staticmethod
     def from_env() -> Config:
@@ -125,6 +132,14 @@ class Config:
             fetch_product_details=_parse_bool("FETCH_PRODUCT_DETAILS", "false"),
             provider_limit=provider_limit,
             max_pages_per_provider=_require_int("MAX_PAGES_PER_PROVIDER", "200"),
+            qa_min_providers_ok=_require_int("QA_MIN_PROVIDERS_OK", "1"),
+            qa_min_products=_require_int("QA_MIN_PRODUCTS", "1"),
+            qa_min_rate_changes=_require_int("QA_MIN_RATE_CHANGES", "1"),
+            qa_max_freshness_hours=_require_float("QA_MAX_FRESHNESS_HOURS", "36"),
+            qa_fail_on_schema_drift=_parse_bool("QA_FAIL_ON_SCHEMA_DRIFT", "false"),
+            qa_run_dbt_tests=_parse_bool("QA_RUN_DBT_TESTS", "true"),
+            qa_dbt_test_command=_getenv("QA_DBT_TEST_COMMAND", "dbt test --project-dir dbt --profiles-dir dbt")
+            or "dbt test --project-dir dbt --profiles-dir dbt",
         )
 
     def pg_dsn(self) -> str:

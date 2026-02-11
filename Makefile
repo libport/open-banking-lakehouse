@@ -16,6 +16,9 @@ dbt:
 report:
 	docker compose run --rm pipeline python -m cdr_pipeline report --date $(DATE)
 
+qa:
+	docker compose run --rm pipeline python -m cdr_pipeline qa --date $(DATE) --skip-dbt-tests
+
 run: ingest dbt report
 
 logs-postgres:

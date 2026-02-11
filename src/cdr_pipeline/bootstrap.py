@@ -101,6 +101,21 @@ CREATE TABLE IF NOT EXISTS raw.product_detail_raw (
     payload_hash text,
     PRIMARY KEY (run_id, provider_id, product_id)
 );
+
+CREATE TABLE IF NOT EXISTS bronze.qa_gate_result (
+    qa_run_id uuid NOT NULL,
+    qa_date date NOT NULL,
+    evaluated_at timestamptz NOT NULL,
+    gate_name text NOT NULL,
+    passed boolean NOT NULL,
+    actual_value double precision,
+    threshold_value double precision,
+    details text,
+    dbt_test_ran boolean NOT NULL,
+    dbt_test_passed boolean NOT NULL,
+    dbt_test_command text,
+    PRIMARY KEY (qa_run_id, gate_name)
+);
 """
 
 

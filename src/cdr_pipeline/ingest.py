@@ -498,6 +498,11 @@ def run_ingest(run_dt: datetime, provider_limit: int | None = None) -> None:
             brands = _discover_brands(cfg, session, conn, run_id, run_date)
             logger.info("Discovered %s brands (filtered to industry=%s).", len(brands), cfg.filter_industry)
 
+            valid_brands = [b for b in brands if b.get("dataHolderBrandId")]
+            skipped_missing_id = len(brands) - len(valid_brands)
+            if skipped_missing_id:
+                logger.warning("Skipping %s discovered brands missing dataHolderBrandId.", skipped_missing_id)
+
             extracted_at = datetime.now(timezone.utc)
             brand_rows = [
                 (
@@ -512,7 +517,7 @@ def run_ingest(run_dt: datetime, provider_limit: int | None = None) -> None:
                     b.get("lastUpdated"),
                     extracted_at,
                 )
-                for b in brands
+                for b in valid_brands
             ]
             if brand_rows:
                 execute_batch(
@@ -529,6 +534,7 @@ def run_ingest(run_dt: datetime, provider_limit: int | None = None) -> None:
                     """,
                     brand_rows,
                 )
+            brands = valid_brands
 
         limit = provider_limit if provider_limit is not None else cfg.provider_limit
         if limit and limit > 0:

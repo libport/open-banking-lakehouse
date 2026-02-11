@@ -8,16 +8,17 @@ Run (inside the pipeline container):
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 from cdr_pipeline.bootstrap import bootstrap_db
 from cdr_pipeline.ingest import run_ingest
+from cdr_pipeline.qa import run_qa
 from cdr_pipeline.report import run_report
 
 
 def _parse_date(s: str | None) -> datetime:
     if not s:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
     try:
         return datetime.fromisoformat(s)
     except ValueError:
@@ -41,6 +42,24 @@ def main(argv: list[str] | None = None) -> int:
     p_rep = sub.add_parser("report", help="Generate reports from gold marts (after dbt build).")
     p_rep.add_argument("--date", default=None, help="Report date (YYYY-MM-DD).")
 
+    p_qa = sub.add_parser("qa", help="Run data quality gates and optional dbt tests.")
+    p_qa.add_argument("--date", default=None, help="QA date (YYYY-MM-DD).")
+    p_qa.add_argument("--min-providers-ok", type=int, default=None, help="Minimum providers with successful product fetch.")
+    p_qa.add_argument("--min-products", type=int, default=None, help="Minimum row count in silver.dim_products for the QA date.")
+    p_qa.add_argument("--min-rate-changes", type=int, default=None, help="Minimum row count in gold.mart_rate_changes for the QA date.")
+    p_qa.add_argument("--max-freshness-hours", type=float, default=None, help="Maximum age in hours for latest raw.products_raw.fetched_at.")
+    p_qa.add_argument(
+        "--fail-on-schema-drift",
+        action="store_true",
+        help="Fail QA if any bronze.schema_drift_event records exist for the QA date.",
+    )
+    p_qa.add_argument("--skip-dbt-tests", action="store_true", help="Skip executing dbt tests as part of QA.")
+    p_qa.add_argument(
+        "--dbt-test-command",
+        default=None,
+        help="Command string for dbt tests (default: from QA_DBT_TEST_COMMAND env).",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "bootstrap":
@@ -54,6 +73,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "report":
         run_report(_parse_date(args.date))
         return 0
+
+    if args.cmd == "qa":
+        return run_qa(
+            _parse_date(args.date),
+            min_providers_ok=args.min_providers_ok,
+            min_products=args.min_products,
+            min_rate_changes=args.min_rate_changes,
+            max_freshness_hours=args.max_freshness_hours,
+            fail_on_schema_drift=True if args.fail_on_schema_drift else None,
+            run_dbt_tests=False if args.skip_dbt_tests else None,
+            dbt_test_command=args.dbt_test_command,
+        )
 
     parser.print_help()
     return 2
