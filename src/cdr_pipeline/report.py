@@ -23,6 +23,18 @@ def _write_csv(path: str, headers: list[str], rows: list[tuple]) -> None:
             w.writerow(list(r))
 
 
+def _relation_exists(conn, relation_name: str) -> bool:
+    rows = fetchall(conn, "SELECT to_regclass(%s)", (relation_name,))
+    return bool(rows and rows[0][0] is not None)
+
+
+def _resolve_relation(conn, candidates: list[str]) -> str | None:
+    for relation_name in candidates:
+        if _relation_exists(conn, relation_name):
+            return relation_name
+    return None
+
+
 def run_report(run_dt: datetime) -> None:
     load_dotenv(override=False)
     cfg = Config.from_env()
@@ -31,54 +43,68 @@ def run_report(run_dt: datetime) -> None:
         _ensure_dir("reports")
 
         errors: list[str] = []
+        rate_changes_rel = _resolve_relation(conn, ["gold.mart_rate_changes", "public_gold.mart_rate_changes"])
+        provider_coverage_rel = _resolve_relation(conn, ["gold.mart_provider_coverage", "public_gold.mart_provider_coverage"])
 
-        try:
-            rate_changes = fetchall(
-                conn,
-                """
-                SELECT
-                  provider_id,
-                  brand_name,
-                  product_id,
-                  product_name,
-                  product_category,
-                  rate_kind,
-                  rate_type,
-                  tier_name,
-                  previous_as_of_date,
-                  current_as_of_date,
-                  previous_rate,
-                  current_rate,
-                  (current_rate - previous_rate) AS delta
-                FROM gold.mart_rate_changes
-                ORDER BY abs(current_rate - previous_rate) DESC NULLS LAST
-                LIMIT 200
-                """,
-            )
-        except Exception as e:  # noqa: BLE001
+        if rate_changes_rel is None:
             rate_changes = []
-            errors.append(f"gold.mart_rate_changes not available (run dbt?): {e}")
+            errors.append("mart_rate_changes not available (expected gold.mart_rate_changes or public_gold.mart_rate_changes)")
+        else:
+            try:
+                rate_changes = fetchall(
+                    conn,
+                    f"""
+                    SELECT
+                      provider_id,
+                      brand_name,
+                      product_id,
+                      product_name,
+                      product_category,
+                      rate_kind,
+                      rate_type,
+                      tier_name,
+                      previous_as_of_date,
+                      current_as_of_date,
+                      previous_rate,
+                      current_rate,
+                      (current_rate - previous_rate) AS delta
+                    FROM {rate_changes_rel}
+                    WHERE current_as_of_date = %s
+                    ORDER BY abs(current_rate - previous_rate) DESC NULLS LAST
+                    LIMIT 200
+                    """,
+                    (report_date,),
+                )
+            except Exception as e:  # noqa: BLE001
+                rate_changes = []
+                errors.append(f"{rate_changes_rel} not available (run dbt?): {e}")
 
-        try:
-            coverage = fetchall(
-                conn,
-                """
-                SELECT
-                  as_of_date,
-                  provider_id,
-                  brand_name,
-                  expected_base_uri,
-                  products_pages_ok,
-                  products_rows,
-                  last_http_status,
-                  last_error
-                FROM gold.mart_provider_coverage
-                ORDER BY brand_name
-                """,
-            )
-        except Exception as e:  # noqa: BLE001
+        if provider_coverage_rel is None:
             coverage = []
-            errors.append(f"gold.mart_provider_coverage not available (run dbt?): {e}")
+            errors.append("mart_provider_coverage not available (expected gold.mart_provider_coverage or public_gold.mart_provider_coverage)")
+        else:
+            try:
+                coverage = fetchall(
+                    conn,
+                    f"""
+                    SELECT
+                      as_of_date,
+                      provider_id,
+                      brand_name,
+                      expected_base_uri,
+                      products_pages_ok,
+                      products_rows,
+                      last_http_status,
+                      last_error
+                    FROM {provider_coverage_rel}
+                    WHERE as_of_date = %s
+                    ORDER BY brand_name
+                    """,
+                    (report_date,),
+                )
+            except Exception as e:  # noqa: BLE001
+                coverage = []
+                errors.append(f"{provider_coverage_rel} not available (run dbt?): {e}")
 
         try:
             drift = fetchall(
@@ -86,9 +112,11 @@ def run_report(run_dt: datetime) -> None:
                 """
                 SELECT provider_id, endpoint, old_fingerprint_hash, new_fingerprint_hash, observed_at
                 FROM bronze.schema_drift_event
+                WHERE observed_at::date = %s
                 ORDER BY observed_at DESC
                 LIMIT 50
                 """,
+                (report_date,),
             )
         except Exception as e:  # noqa: BLE001
             drift = []

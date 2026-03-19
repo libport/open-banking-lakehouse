@@ -6,7 +6,7 @@ import subprocess
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from dotenv import load_dotenv
 
@@ -188,6 +188,7 @@ def run_qa(
 
     qa_date = run_dt.date()
     now_utc = datetime.now(timezone.utc)
+    freshness_anchor = datetime.combine(qa_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
     qa_run_id = str(uuid.uuid4())
 
     dbt_passed = True
@@ -286,8 +287,9 @@ def run_qa(
                 sql="""
                 SELECT EXTRACT(EPOCH FROM ((%s::timestamptz) - MAX(fetched_at))) / 3600.0
                 FROM raw.products_raw
+                WHERE fetched_at::date = %s
                 """,
-                params=(now_utc,),
+                params=(freshness_anchor, qa_date),
                 unit="h",
             )
         )

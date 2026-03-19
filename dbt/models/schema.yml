@@ -44,6 +44,9 @@ models:
             - rate_kind
             - rate_type
             - tier_name
+            - tier_unit_of_measure
+            - tier_minimum_value
+            - tier_maximum_value
     columns:
       - name: provider_id
         tests: [not_null]
@@ -51,6 +54,13 @@ models:
         tests: [not_null]
 
   - name: mart_provider_coverage
+    tests:
+      - unique_combo:
+          combination_of_columns:
+            - as_of_date
+            - provider_id
     columns:
       - name: provider_id
-        tests: [not_null, unique]
+        tests: [not_null]
+      - name: as_of_date
+        tests: [not_null]

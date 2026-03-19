@@ -125,8 +125,11 @@ def bootstrap_db(force: bool = False) -> None:
         if force:
             logger.warning("FORCE: dropping schemas (deletes all data).")
             execute(conn, "DROP SCHEMA IF EXISTS gold CASCADE;")
+            execute(conn, "DROP SCHEMA IF EXISTS public_gold CASCADE;")
             execute(conn, "DROP SCHEMA IF EXISTS silver CASCADE;")
+            execute(conn, "DROP SCHEMA IF EXISTS public_silver CASCADE;")
             execute(conn, "DROP SCHEMA IF EXISTS staging CASCADE;")
+            execute(conn, "DROP SCHEMA IF EXISTS public_staging CASCADE;")
             execute(conn, "DROP SCHEMA IF EXISTS raw CASCADE;")
             execute(conn, "DROP SCHEMA IF EXISTS bronze CASCADE;")
 
