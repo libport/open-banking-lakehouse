@@ -1,86 +1,138 @@
 # AU Open Banking (CDR) Product & Pricing Lakehouse
 
-This project builds a local-first data engineering pipeline for Australian financial services using Consumer Data Right (CDR) Open Banking public product APIs:
-- Discovers Data Holder brands via the CDR Register "Get Data Holder Brands Summary" endpoint
-- Ingests public product & pricing payloads from each Data Holder (unauthenticated)
-- Stores raw JSON ("bronze") to local disk + "raw" JSONB tables in Postgres
-- Transforms to analytics-ready tables with dbt (staging → silver → gold)
-- Produces a daily rate-change report (CSV + Markdown)
-- Runs configurable QA gates with optional dbt test execution
-- Optional: view dashboards in Metabase (local)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/docker-required-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![dbt 1.9](https://img.shields.io/badge/dbt-1.9-FF694B?logo=dbt&logoColor=white)](https://www.getdbt.com/)
+[![Postgres 16](https://img.shields.io/badge/postgres-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Tests: pytest](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> Notes:
-> - Public product endpoints are unauthenticated by design, but Data Holders may apply rate limits or availability constraints.
-> - API versions can vary across Data Holders. This pipeline includes version fallback when it receives a 406.
-> - Ingestion includes pagination loop detection and a configurable page cap per provider for safety.
+Local-first data pipeline for Australian Consumer Data Right (CDR) Open Banking public product APIs. It discovers registered data holder brands, ingests public product and pricing payloads, stores raw JSON locally and in Postgres, transforms them with dbt, and produces daily reporting and QA artifacts.
 
-## Quickstart (Docker-only)
+## What It Does
+
+- Discovers Data Holder brands from the CDR Register brands summary endpoint
+- Ingests unauthenticated public product payloads from each provider
+- Stores raw payloads in both local `data/bronze/` partitions and Postgres JSONB tables
+- Detects schema drift and records drift events per provider and endpoint
+- Builds staging, silver, and gold marts with dbt
+- Generates daily rate-change and provider-coverage reports
+- Runs configurable QA gates, with optional `dbt test` execution
+- Supports local Metabase for ad hoc exploration
+
+Notes:
+- Public product endpoints are unauthenticated by design, but providers may rate limit or have intermittent availability issues.
+- API versions vary across providers. The HTTP client includes version fallback when a preferred `x-v` is rejected.
+- Pagination safety includes loop detection and a maximum pages-per-provider cap.
+
+## Architecture
+
+```text
+CDR Register + provider product APIs
+  -> Python ingestion pipeline
+  -> local bronze JSON files + Postgres bronze/raw tables
+  -> dbt staging/silver/gold models
+  -> CSV + Markdown reports
+  -> QA gate results
+  -> optional Metabase queries/dashboarding
+```
+
+## Repo Layout
+
+```text
+src/cdr_pipeline/   Python CLI, ingestion, bootstrap, reporting, QA
+dbt/                dbt project, models, macros, profiles
+tests/              pytest coverage for config, reporting, QA, regressions
+Dockerfile          pipeline image
+docker-compose.yml  Postgres, dbt, Metabase, pipeline services
+Makefile            common local and Docker workflows
+```
+
+## Quickstart
 
 Requirements:
-- Docker + Docker Compose
+- Docker
+- Docker Compose
+
+Run the full pipeline locally with containers:
 
 ```bash
-# 1) Start Postgres + Metabase
+# Start Postgres and Metabase
 make up
 
-# 2) Run a full pipeline run (ingest → dbt build → report)
+# Ingest -> dbt build -> report
 make run
 
-# 3) Run QA gates (in Docker, dbt tests are skipped)
+# Run QA gates (dbt tests skipped in this Make target)
 make qa
 ```
 
-If `make up` fails due a Metabase image tag issue, start only Postgres:
+Service endpoints:
+- Metabase: http://localhost:3000
+- Postgres: `localhost:5432`
+- Default Postgres database/user/password: `cdr`
+
+If Metabase image startup is the only issue, you can still run the data pipeline against Postgres alone:
 
 ```bash
 docker compose up -d postgres
 ```
 
-Metabase will be available at:
-- http://localhost:3000
+## CLI Commands
 
-Postgres is available at:
-- localhost:5432 (db/user/pass all `cdr` by default)
+The package exposes a `cdr-pipeline` CLI after editable install, and the same commands are available through `python -m cdr_pipeline`.
 
-## Local development (optional, run pipeline on your host)
+Available subcommands:
+- `bootstrap`: create required schemas and tables
+- `ingest`: discover brands and ingest raw product payloads
+- `report`: generate CSV and Markdown report artifacts
+- `qa`: run quality gates and optionally execute `dbt test`
 
-If you want to run the **Python pipeline outside Docker** (for faster iteration / debugging), the repo now includes a `pyproject.toml` so you can install it in editable mode and use the `cdr-pipeline` CLI.
+Examples:
+
+```bash
+python -m cdr_pipeline bootstrap
+python -m cdr_pipeline ingest --date 2026-02-10
+python -m cdr_pipeline report --date 2026-02-10
+python -m cdr_pipeline qa --date 2026-02-10 --skip-dbt-tests
+```
+
+## Local Development
+
+Use this path when you want to run the Python pipeline on your host instead of inside the `pipeline` container.
 
 Requirements:
 - Python 3.10+
-- A Postgres instance (easiest: start the project's containerized Postgres with `make up`)
-- dbt (either use the provided `dbt` Docker service, or install `dbt-postgres` locally)
+- A running Postgres instance
+- dbt if you want to run dbt outside Docker
+
+The simplest setup is to reuse the repo's Postgres container:
 
 ```bash
-# 0) Start Postgres (+ Metabase if you want it)
 make up
 
-# 1) Create a virtualenv and install the package (reads deps from requirements.txt)
 python -m venv .venv
 source .venv/bin/activate
 pip install -U pip
-pip install -e .
+pip install -e ".[dev]"
+```
 
-# 2) Run ingest → dbt build → report
+Run the pipeline locally:
+
+```bash
 cdr-pipeline ingest --date 2026-02-10
 
-# Option A: run dbt via Docker (recommended if you don't want local dbt)
-docker compose run --rm dbt build
+# Option A: dbt in Docker
+docker compose run --rm dbt dbt build
 
-# Option B: run dbt locally (if you installed dbt-postgres)
-# dbt build --project-dir dbt
+# Option B: dbt installed locally
+# dbt build --project-dir dbt --profiles-dir dbt
 
 cdr-pipeline report --date 2026-02-10
-
-# 3) Run QA gates + dbt tests (local dbt installed)
-cdr-pipeline qa --date 2026-02-10
-
-# If you use dbt via Docker, run dbt test separately and skip inside QA
-docker compose run --rm dbt test
 cdr-pipeline qa --date 2026-02-10 --skip-dbt-tests
 ```
 
-You can also call the module directly (equivalent to the CLI):
+Equivalent module entry points:
 
 ```bash
 python -m cdr_pipeline ingest --date 2026-02-10
@@ -88,73 +140,99 @@ python -m cdr_pipeline report --date 2026-02-10
 python -m cdr_pipeline qa --date 2026-02-10 --skip-dbt-tests
 ```
 
-## What gets created
-
-### Storage
-- Local raw files: `data/bronze/...` (partitioned by date/provider/endpoint/page)
-- Postgres schemas:
-  - `bronze` - pipeline run metadata, API call logs, drift events, discovered brands, QA gate results
-  - `raw` - raw API payloads stored as JSONB
-  - dbt output schemas default to `public_staging`, `public_silver`, `public_gold` with current `dbt/profiles.yml`
-
-### Outputs
-- `reports/`:
-  - `rate_changes_<YYYY-MM-DD>.csv`
-  - `pipeline_summary_<YYYY-MM-DD>.md`
-  - `qa_summary_<YYYY-MM-DD>.md`
-
-## Useful commands
+## Make Targets
 
 ```bash
 make up
 make down
-
-# Ingest only
 make ingest
-
-# Transform only
 make dbt
-
-# Report only
 make report
-
-# QA gates (skip dbt tests in container)
 make qa
+make run
+make logs-postgres
+make logs-metabase
 ```
 
-Basic local quality checks:
-
-```bash
-pip install -e ".[dev]"
-ruff check src tests
-pytest -q
-```
-
-You can override the run date:
+Override the run date when using Make:
 
 ```bash
 DATE=2026-02-10 make run
 ```
 
+## Data And Outputs
+
+Storage created by the pipeline:
+- Local raw files under `data/bronze/ingestion_date=<date>/provider=<id>/endpoint=<name>/page=<n>.json`
+- Postgres schema `bronze` for run metadata, brands, API call logs, schema fingerprints, drift events, and QA gate results
+- Postgres schema `raw` for raw product and product-detail payloads
+- dbt output schemas typically materialized as `public_staging`, `public_silver`, and `public_gold` with the current [`dbt/profiles.yml`](dbt/profiles.yml)
+
+Report artifacts written under `reports/`:
+- `rate_changes_<YYYY-MM-DD>.csv`
+- `provider_coverage_<YYYY-MM-DD>.csv`
+- `pipeline_summary_<YYYY-MM-DD>.md`
+- `qa_summary_<YYYY-MM-DD>.md`
+
 ## Configuration
 
-Copy `.env.example` to `.env` (optional). Defaults work out-of-the-box for local Docker.
+The code loads environment variables with `python-dotenv`, so you can define them in a local `.env` file if you want. There is currently no committed `.env.example`; Docker defaults are enough for a local first run.
 
-Key env vars:
-- `CDR_REGISTER_INDUSTRY` (default: `all`) - discovery endpoint industry path
-- `CDR_FILTER_INDUSTRY` (default: `banking`) - keep brands that support this industry
-- `CDR_PRODUCTS_XV` (default: `4`) - preferred x-v for Get Products (fallbacks included)
-- `CDR_REGISTER_XV` (default: `2`) - preferred x-v for Brands Summary (fallbacks included)
-- `FETCH_PRODUCT_DETAILS` (default: `false`) - if true, also calls Get Product Detail for each productId
-- `PROVIDER_LIMIT` (default: empty) - set to an integer to limit number of providers (useful for quick runs)
-- `MAX_PAGES_PER_PROVIDER` (default: `200`) - hard cap to prevent pagination loops or runaway fetches
-- `QA_MIN_PROVIDERS_OK` (default: `1`) - minimum providers with successful product fetch in `gold.mart_provider_coverage`
-- `QA_MIN_PRODUCTS` (default: `1`) - minimum rows in `silver.dim_products` for QA date
-- `QA_MIN_RATE_CHANGES` (default: `1`) - minimum rows in `gold.mart_rate_changes` for QA date
-- `QA_MAX_FRESHNESS_HOURS` (default: `36`) - max age (hours) of latest `raw.products_raw.fetched_at`
-- `QA_FAIL_ON_SCHEMA_DRIFT` (default: `false`) - fail QA when any `bronze.schema_drift_event` occurs on QA date
-- `QA_RUN_DBT_TESTS` (default: `true`) - run dbt tests as part of `cdr-pipeline qa`
-- `QA_DBT_TEST_COMMAND` (default: `dbt test --project-dir dbt --profiles-dir dbt`) - command used for dbt test execution
+Core connection settings:
+- `POSTGRES_HOST` default `localhost`
+- `POSTGRES_PORT` default `5432`
+- `POSTGRES_DB` default `cdr`
+- `POSTGRES_USER` default `cdr`
+- `POSTGRES_PASSWORD` default `cdr`
+
+CDR register and product API settings:
+- `CDR_REGISTER_BASE` default `https://api.cdr.gov.au`
+- `CDR_REGISTER_INDUSTRY` default `all`
+- `CDR_FILTER_INDUSTRY` default `banking`
+- `CDR_REGISTER_XV` default `2`
+- `CDR_REGISTER_XV_FALLBACK` default `1`
+- `CDR_PRODUCTS_PATH` default `/cds-au/v1/banking/products`
+- `CDR_PRODUCTS_XV` default `4`
+- `CDR_PRODUCTS_XV_FALLBACK` default `3,2,1`
+- `CDR_PRODUCT_DETAIL_PATH` default `/cds-au/v1/banking/products/{productId}`
+- `CDR_PRODUCT_DETAIL_XV` default `6`
+- `CDR_PRODUCT_DETAIL_XV_FALLBACK` default `5,4,3,2,1`
+- `FETCH_PRODUCT_DETAILS` default `false`
+- `PROVIDER_LIMIT` optional integer limit for quick runs
+
+HTTP and safety settings:
+- `HTTP_TIMEOUT_SECONDS` default `30`
+- `HTTP_RETRY_TOTAL` default `5`
+- `HTTP_RETRY_BACKOFF` default `0.4`
+- `HTTP_USER_AGENT` default `cdr-open-banking-lakehouse-local/1.0`
+- `MAX_PAGES_PER_PROVIDER` default `200`
+
+QA settings:
+- `QA_MIN_PROVIDERS_OK` default `1`
+- `QA_MIN_PRODUCTS` default `1`
+- `QA_MIN_RATE_CHANGES` default `1`
+- `QA_MAX_FRESHNESS_HOURS` default `36`
+- `QA_FAIL_ON_SCHEMA_DRIFT` default `false`
+- `QA_RUN_DBT_TESTS` default `true`
+- `QA_DBT_TEST_COMMAND` default `dbt test --project-dir dbt --profiles-dir dbt`
+
+## Verification
+
+After local install, run:
+
+```bash
+ruff check src tests
+pytest -q
+```
+
+If you want to run tests without editable install, make the package importable first:
+
+```bash
+PYTHONPATH=src pytest -q
+```
+
+You still need the project dependencies installed for that to work.
 
 ## License
-MIT (see `LICENSE`).
+
+MIT. See [LICENSE](LICENSE).
