@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+pgdata/
+data/bronze/
+reports/
+target/
+dbt_packages/
+logs/
+.DS_Store

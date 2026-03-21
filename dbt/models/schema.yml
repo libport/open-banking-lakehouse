@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: dim_products
+    tests:
+      - unique_combo:
+          combination_of_columns:
+            - provider_id
+            - product_id
+            - as_of_date
+    columns:
+      - name: provider_id
+        tests: [not_null]
+      - name: product_id
+        tests: [not_null]
+      - name: as_of_date
+        tests: [not_null]
+
+  - name: fct_product_rates
+    columns:
+      - name: provider_id
+        tests: [not_null]
+      - name: product_id
+        tests: [not_null]
+      - name: as_of_date
+        tests: [not_null]
+      - name: rate_kind
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['deposit', 'lending']
+      - name: rate_type
+        tests: [not_null]
+      - name: rate
+        tests: [not_null]
+
+  - name: mart_rate_changes
+    tests:
+      - unique_combo:
+          combination_of_columns:
+            - provider_id
+            - product_id
+            - current_as_of_date
+            - rate_kind
+            - rate_type
+            - tier_name
+            - tier_unit_of_measure
+            - tier_minimum_value
+            - tier_maximum_value
+    columns:
+      - name: provider_id
+        tests: [not_null]
+      - name: product_id
+        tests: [not_null]
+
+  - name: mart_provider_coverage
+    tests:
+      - unique_combo:
+          combination_of_columns:
+            - as_of_date
+            - provider_id
+    columns:
+      - name: provider_id
+        tests: [not_null]
+      - name: as_of_date
+        tests: [not_null]

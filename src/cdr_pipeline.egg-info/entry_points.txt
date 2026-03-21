@@ -1,0 +1,2 @@
+[console_scripts]
+cdr-pipeline = cdr_pipeline.__main__:main
